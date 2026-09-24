@@ -3,7 +3,7 @@ import { lookupInput } from "@/lib/match";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 1800;
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
