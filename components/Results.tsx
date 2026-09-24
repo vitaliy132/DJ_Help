@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { formatStamp } from "@/lib/text";
 import type { LookupResponse, SoundCloudMatch, TrackRow } from "@/lib/types";
 
@@ -73,7 +74,7 @@ function Row({
         {track.label ? <div className="label">{track.label}</div> : null}
         <div className={track.match ? "matchline" : "matchline dim"}>
           {track.match
-            ? `SoundCloud · ${track.match.username || track.match.artist}`
+            ? `SoundCloud · ${track.match.artist} — ${track.match.title}`
             : "No close SoundCloud upload"}
         </div>
         {track.links.length > 0 ? (
@@ -135,6 +136,13 @@ export function Results({
   const withHours = (result.set.durationSeconds ?? 0) >= 3600 || result.tracks.some((track) => track.endSeconds != null);
   const duration = formatStamp(result.set.durationSeconds ?? null, withHours);
   const downloadable = result.tracks.filter((track) => track.match?.downloadable);
+  const [saving, setSaving] = useState(false);
+  const [saveNote, setSaveNote] = useState("");
+
+  useEffect(() => {
+    setSaving(false);
+    setSaveNote("");
+  }, [result]);
   const coverage = result.set.coverage != null ? `${Math.round(result.set.coverage * 100)}% covered` : "";
   const byline = [
     result.set.author,
@@ -146,6 +154,45 @@ export function Results({
     .filter(Boolean)
     .join(" · ");
 
+  async function saveSet() {
+    setSaving(true);
+    setSaveNote("");
+    try {
+      const response = await fetch("/api/download-set", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: result.set.title,
+          tracks: downloadable.map((track) => ({ id: track.match?.id, index: track.index })),
+        }),
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error || `Request failed (${response.status}).`);
+      }
+      const saved = Number(response.headers.get("x-saved") || 0);
+      const skipped = Number(response.headers.get("x-skipped") || 0);
+      const off = result.tracks.length - downloadable.length;
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const filename = disposition.match(/filename\*=UTF-8''([^;]+)/);
+      link.href = url;
+      link.download = filename ? decodeURIComponent(filename[1]) : "set.zip";
+      link.click();
+      URL.revokeObjectURL(url);
+      const parts = [`Saved ${saved}.`];
+      if (off) parts.push(`${off} have downloads turned off.`);
+      if (skipped) parts.push(`${skipped} downloads failed.`);
+      setSaveNote(parts.join(" "));
+    } catch (reason) {
+      setSaveNote(reason instanceof Error ? reason.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="results">
       <header className="sethead">
@@ -156,12 +203,9 @@ export function Results({
         </div>
         <div className="setactions">
           {downloadable.length ? (
-            <a
-              className="save-set"
-              href={`/api/download-set?ids=${downloadable.map((track) => track.match?.id).join(",")}&name=${encodeURIComponent(result.set.title)}`}
-            >
-              save set ({downloadable.length})
-            </a>
+            <button type="button" className="save-set" onClick={() => void saveSet()} disabled={saving}>
+              {saving ? "Saving…" : `save set (${downloadable.length})`}
+            </button>
           ) : null}
           <button type="button" className="textbtn" onClick={() => onCopy("list")} disabled={!result.tracks.length}>
             copy list
@@ -170,6 +214,7 @@ export function Results({
             copy links
           </button>
           {copied ? <span className="copied">{copied}</span> : null}
+          {saveNote ? <span className="copied">{saveNote}</span> : null}
         </div>
       </header>
       {result.warnings.map(visibleWarning).filter(Boolean).map((warning) => (

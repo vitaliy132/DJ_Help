@@ -151,12 +151,13 @@ a { color: inherit; }
 .save-set {
   background: var(--text);
   color: #141311;
+  border: 0;
   border-radius: 999px;
   padding: 7px 12px;
-  text-decoration: none;
   font-size: 14px;
+  cursor: pointer;
 }
-.save-set:hover { background: #fff; }
+.save-set:hover:not(:disabled) { background: #fff; }
 .ghost svg { width: 15px; height: 15px; }
 
 .error, .warning {

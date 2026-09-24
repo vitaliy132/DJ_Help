@@ -26,4 +26,15 @@ describe("SoundCloud mapping", () => {
     assert.equal(track?.downloadable, true);
     assert.equal(track?.artist, "Disclosure");
   });
+
+  it("keeps the publisher artist and release title", () => {
+    const track = mapSoundCloudTrack({
+      id: 9,
+      title: "PREMIERE: Adam Beyer - Your Mind",
+      user: { username: "drumcode", full_name: "Drumcode" },
+      publisher_metadata: { artist: "Adam Beyer", release_title: "Your Mind" },
+    });
+    assert.equal(track?.publisherArtist, "Adam Beyer");
+    assert.equal(track?.releaseTitle, "Your Mind");
+  });
 });

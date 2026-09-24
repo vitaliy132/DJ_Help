@@ -1,6 +1,30 @@
 import type { Confidence } from "./types";
 
 const VERSION_RE = /\b(remix|bootleg|edits?|flip|cover|rework|vip|dubs?|instrumental|acapella|extended)\b/g;
+const RELEASE_TAG =
+  "(?:(?:soundcloud|sc)\\s+)?(?:premiere|exclusive|free\\s+dl|free\\s+download|out\\s+now|preview)";
+const LEADING_TAG = new RegExp(`^(?:${RELEASE_TAG})(?:\\s*[:|\\-–—]\\s*|\\s+)`, "i");
+const WRAPPED_LEADING = new RegExp(`^[\\[\\(【]\\s*(?:${RELEASE_TAG})\\s*[\\]\\)】]\\s*`, "i");
+const WRAPPED_TRAILING = new RegExp(`\\s*[\\[\\(【]\\s*(?:${RELEASE_TAG})\\s*[\\]\\)】]\\s*$`, "i");
+
+export function stripReleaseTags(value: string): string {
+  let current = value.trim();
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = current.replace(WRAPPED_LEADING, "").replace(LEADING_TAG, "").replace(WRAPPED_TRAILING, "").trim();
+    if (!next || next === current) break;
+    current = next;
+  }
+  return current || value.trim();
+}
+
+export function searchQueries(artist: string, title: string): { primary: string; titleOnly: string } {
+  const cleanArtist = stripReleaseTags(artist);
+  const cleanTitle = stripReleaseTags(title);
+  return {
+    primary: `${cleanArtist} ${cleanTitle}`.replace(/\s+/g, " ").trim(),
+    titleOnly: cleanTitle,
+  };
+}
 
 export function normalize(value: string): string {
   return value
@@ -47,11 +71,14 @@ export function scoreMatch(
   candidate: { artist: string; title: string; durationSec?: number },
   hint?: { durationSec?: number },
 ): number {
-  let candidateArtist = candidate.artist;
-  let candidateTitle = candidate.title;
-  const split = candidate.title.split(/\s+[-–—]\s+/);
+  queryArtist = stripReleaseTags(queryArtist);
+  queryTitle = stripReleaseTags(queryTitle);
+  const listedTitle = stripReleaseTags(candidate.title);
+  let candidateArtist = stripReleaseTags(candidate.artist);
+  let candidateTitle = listedTitle;
+  const split = listedTitle.split(/\s+[-–—]\s+/);
   if (split.length >= 2) {
-    candidateArtist = `${candidate.artist} ${split[0]}`;
+    candidateArtist = `${candidateArtist} ${split[0]}`;
     candidateTitle = split.slice(1).join(" - ");
   }
 
@@ -62,7 +89,7 @@ export function scoreMatch(
   const artistScore = Math.max(
     jaccard(tokens(queryArtist), tokens(candidateArtist)),
     hasPhrase(candidateArtist, queryArtist) || hasPhrase(queryArtist, candidateArtist) ? 0.92 : 0,
-    hasPhrase(candidate.title, queryArtist) ? 0.78 : 0,
+    hasPhrase(listedTitle, queryArtist) ? 0.78 : 0,
   );
 
   let score = titleScore * 0.64 + artistScore * 0.36;

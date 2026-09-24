@@ -1,6 +1,7 @@
 import { env } from "./env";
 import { httpsUrl, warn } from "./http";
 import { mapPool } from "./pool";
+import { searchQueries } from "./score";
 import { getJson, safeFilename } from "./text";
 
 export type ScTrack = {
@@ -13,6 +14,8 @@ export type ScTrack = {
   durationMs: number;
   downloadable: boolean;
   genre?: string;
+  publisherArtist?: string;
+  releaseTitle?: string;
   description?: string;
   kind?: string;
   tracks?: ScTrack[];
@@ -80,6 +83,12 @@ export function mapSoundCloudTrack(raw: unknown): ScTrack | null {
   const nested = Array.isArray(record.tracks)
     ? record.tracks.map(mapSoundCloudTrack).filter((track): track is ScTrack => Boolean(track))
     : undefined;
+  const publisher =
+    record.publisher_metadata && typeof record.publisher_metadata === "object"
+      ? (record.publisher_metadata as Record<string, unknown>)
+      : null;
+  const publisherArtist = typeof publisher?.artist === "string" ? publisher.artist.trim() : "";
+  const releaseTitle = typeof publisher?.release_title === "string" ? publisher.release_title.trim() : "";
 
   return {
     id,
@@ -91,6 +100,8 @@ export function mapSoundCloudTrack(raw: unknown): ScTrack | null {
     durationMs: Number(record.duration || 0),
     downloadable: Boolean(record.downloadable) || typeof record.download_url === "string",
     genre: typeof record.genre === "string" && record.genre.trim() ? record.genre.trim() : undefined,
+    publisherArtist: publisherArtist || undefined,
+    releaseTitle: releaseTitle || undefined,
     description: typeof record.description === "string" ? record.description : undefined,
     kind: typeof record.kind === "string" ? record.kind : undefined,
     tracks: nested,
@@ -166,17 +177,18 @@ async function queryTracks(token: string, q: string, playable: boolean, limit: s
   return trackList(await soundcloudGet(`/tracks?${params.toString()}`, token));
 }
 
-export async function searchSoundCloud(artist: string, title: string, warnings: string[]): Promise<ScTrack[]> {
+async function searchQuery(query: string, warnings: string[]): Promise<ScTrack[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
   try {
     const token = await getSoundCloudToken();
-    const query = `${artist} ${title}`;
     let list: unknown[];
     try {
-      list = await queryTracks(token, query, true, "8");
+      list = await queryTracks(token, trimmed, true, "12");
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (!message.includes("(400)")) throw error;
-      list = await queryTracks(token, query, false, "8");
+      list = await queryTracks(token, trimmed, false, "12");
     }
     return list.map(mapSoundCloudTrack).filter((track): track is ScTrack => Boolean(track?.title));
   } catch (error) {
@@ -187,6 +199,14 @@ export async function searchSoundCloud(artist: string, title: string, warnings: 
     );
     return [];
   }
+}
+
+export async function searchSoundCloud(artist: string, title: string, warnings: string[]): Promise<ScTrack[]> {
+  return searchQuery(searchQueries(artist, title).primary, warnings);
+}
+
+export async function searchSoundCloudTitle(title: string, warnings: string[]): Promise<ScTrack[]> {
+  return searchQuery(searchQueries("", title).titleOnly, warnings);
 }
 
 export async function probeSoundCloud(): Promise<void> {

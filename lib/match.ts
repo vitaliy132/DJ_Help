@@ -4,7 +4,7 @@ import { coverageOf, listenToSource } from "./listen";
 import { parseTracklist } from "./parse-tracklist";
 import { mapPool } from "./pool";
 import { confidenceFor, scoreMatch } from "./score";
-import { openOfficialDownload, searchSoundCloud, soundcloudConfigured, type ScTrack } from "./soundcloud";
+import { openOfficialDownload, searchSoundCloud, searchSoundCloudTitle, soundcloudConfigured, type ScTrack } from "./soundcloud";
 import { detectLink, readSource, type PreparedTrack, type SourceSet } from "./sources";
 import type { LookupResponse, SoundCloudMatch, TrackRow } from "./types";
 
@@ -31,6 +31,36 @@ function toMatch(track: ScTrack, score: number): SoundCloudMatch | null {
   };
 }
 
+function uploadScore(
+  artist: string,
+  title: string,
+  upload: ScTrack,
+  hint?: { durationSec?: number },
+): number {
+  const durationSec = upload.durationMs ? upload.durationMs / 1000 : undefined;
+  const pairs = [{ artist: upload.artist, title: upload.title, durationSec }];
+  if (upload.publisherArtist || upload.releaseTitle) {
+    pairs.push({
+      artist: upload.publisherArtist || upload.artist,
+      title: upload.releaseTitle || upload.title,
+      durationSec,
+    });
+  }
+  return Math.max(...pairs.map((pair) => scoreMatch(artist, title, pair, hint)));
+}
+
+function rankUploads(artist: string, title: string, uploads: ScTrack[], hint?: { durationSec?: number }): SoundCloudMatch[] {
+  return uploads
+    .map((upload) => toMatch(upload, uploadScore(artist, title, upload, hint)))
+    .filter((upload): upload is SoundCloudMatch => Boolean(upload))
+    .sort((left, right) => {
+      if (Math.abs(left.score - right.score) <= 0.05 && left.downloadable !== right.downloadable) {
+        return left.downloadable ? -1 : 1;
+      }
+      return right.score - left.score;
+    });
+}
+
 async function matchTracks(tracks: PreparedTrack[], warnings: string[]): Promise<TrackRow[]> {
   const enabled = soundcloudConfigured();
   if (!enabled) {
@@ -50,29 +80,17 @@ async function matchTracks(tracks: PreparedTrack[], warnings: string[]): Promise
       if (preset) ranked = [preset];
     } else if (enabled) {
       const uploads = await searchSoundCloud(track.artist, track.title, warnings);
-      ranked = uploads
-        .map((upload) =>
-          toMatch(
-            upload,
-            scoreMatch(
-              track.artist,
-              track.title,
-              {
-                artist: upload.artist,
-                title: upload.title,
-                durationSec: upload.durationMs ? upload.durationMs / 1000 : undefined,
-              },
-              hint,
-            ),
-          ),
-        )
-        .filter((upload): upload is SoundCloudMatch => Boolean(upload))
-        .sort((left, right) => {
-          if (Math.abs(left.score - right.score) <= 0.05 && left.downloadable !== right.downloadable) {
-            return left.downloadable ? -1 : 1;
-          }
-          return right.score - left.score;
-        });
+      ranked = rankUploads(track.artist, track.title, uploads, hint);
+      if ((ranked[0]?.score ?? 0) < 0.55) {
+        const more = await searchSoundCloudTitle(track.title, warnings);
+        const seen = new Set(uploads.map((upload) => upload.id));
+        ranked = rankUploads(
+          track.artist,
+          track.title,
+          [...uploads, ...more.filter((upload) => !seen.has(upload.id))],
+          hint,
+        );
+      }
     }
 
     const primaryIndex = ranked.findIndex((item) => item.confidence !== "possible");
